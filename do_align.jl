@@ -4,14 +4,27 @@ export Cairo
 import Compose
 import Fontconfig
 
-using Distributed
-nprocs()==1 && addprocs()
+#using Distributed
+#nprocs()==1 && addprocs()
 using DISSEQT
 using DISSEQT.AlignUtils
+import DISSEQT.AlignUtils.singlefastq
+import DISSEQT.AlignUtils.concatfastq
+import DISSEQT.AlignUtils.removetempfiles
+import DISSEQT.AlignUtils.trimmedfastqname
+import DISSEQT.AlignUtils.bwaalign
+import DISSEQT.AlignUtils.trimfastq
+import DISSEQT.AlignUtils.bwaindexfilescreated
+import DISSEQT.AlignUtils.bamsort
+import DISSEQT.AlignUtils.bamindex
+import DISSEQT.AlignUtils.bwaindex
+import DISSEQT.AlignUtils.bwaindexfilescreated
+
 #using SynapseClient
 #using DISSEQT.SynapseTools
 using JLD
 using Dates
+
 
 mutable struct DiskBuffer
 	filename::String
@@ -29,18 +42,18 @@ end
 
 function printiferror(log,str)
 	str = strip(str)
-	isempty(str) || println(log, "ERROR: ", str)
+	isempty(str) || println("ERROR: ", str)
 end
 
 # only prints if str is nonempty
 function printifwarning(log,str)
 	str = strip(str)
-	isempty(str) || println(log, "WARNING: ", str)
+	isempty(str) || println("WARNING: ", str)
 end
 
 function printifinfo(log,str)
 	str = strip(str)
-	isempty(str) || println(log, str)
+	isempty(str) || println(str)
 end
 
 
@@ -66,7 +79,7 @@ function fastqmcfversion()
 end
 
 
-function align_sample!(sample::Sample, adapters::String,
+function align_sample(sample::Sample, adapters::String,
 	                   outFolder::String, tempFolder::String; 
 	                   log::IO=devnull, globalLog::IO=devnull, 
 	                   maxAlignIterations::Int=5, consensusMinSupport::Int=100,
@@ -74,13 +87,12 @@ function align_sample!(sample::Sample, adapters::String,
 	                   keepUnmapped::Bool=true,
 	                   nbrThreads::Int=4)
 	tempFiles = String[]
-
 	# make sure fastq-files are concatenated
-	ret,singleFastq = singlefastq(sample.fastqLocal,sample.fastqLocal2,joinpath(tempFolder,sample.name),tempFiles,log)
+	ret, singleFastq = singlefastq(sample.fastq, sample.fastq2, joinpath(tempFolder, sample.name), tempFiles, log)
 	if ret != 0
 		removetempfiles(tempFiles, log=log)
 		printiferror(globalLog, "$(sample.name): Fastq concatenation failed.")
-		return ret
+		
 	end
 	
 	trimmedFastq = trimmedfastqname(singleFastq, joinpath(tempFolder,sample.name), tempFiles)
@@ -88,7 +100,7 @@ function align_sample!(sample::Sample, adapters::String,
 	if ret != 0
 		removetempfiles(tempFiles, log=log)
 		printiferror(globalLog, "$(sample.name): Fastq trimming failed.")
-		return ret	
+
 	end
 
 
@@ -103,7 +115,7 @@ function align_sample!(sample::Sample, adapters::String,
 		if ret != 0
 			removetempfiles(tempFiles, log=log)
 			printiferror(globalLog, "$(sample.name): Alignment failed.")
-			return ret	
+
 		end
 
 
@@ -152,27 +164,27 @@ function align_sample!(sample::Sample, adapters::String,
 	if ret != 0
 		removetempfiles(tempFiles, log=log)
 		printiferror(globalLog, "$(sample.name): Bam sorting failed.")
-		return ret
+
 	end
 
 	ret = bamindex(sample.bam; log=log)
 	if ret != 0
 		removetempfiles(tempFiles, log=log)
 		printiferror(globalLog, "$(sample.name): Bam indexing failed.")
-		return ret
+
 	end
 
 	removetempfiles(tempFiles, log=log)
 
 	println(globalLog, "$(sample.name) aligned successfully.")
-	return 0
+	return sample 
 end
 
 
 
 
 # helper function made to be called by pmap
-function align_single!(sample::Sample, adapters::String,
+function align_single(sample::Sample, adapters::String,
                        outFolder::String, tempFolder::String,
                        maxAlignIterations::Int, consensusMinSupport::Int, 
 	                   consensusIndelMinSupport::Int,
@@ -182,7 +194,7 @@ function align_single!(sample::Sample, adapters::String,
 	globalLog = IOBuffer()
 
 	try 
-		align_sample!(sample, adapters, outFolder, tempFolder, 
+		sample = align_sample(sample, adapters, outFolder, tempFolder, 
 			          log=log, globalLog=globalLog, maxAlignIterations=maxAlignIterations,
 			          consensusMinSupport=consensusMinSupport,
 			          consensusIndelMinSupport=consensusIndelMinSupport,
@@ -210,7 +222,7 @@ function find_samples(fastqPath::String, namePrefix::String="", pattern::Regex=r
 
 	fileNames = readdir(fastqPath, join=false)
 	filePaths = readdir(fastqPath, join=true)
-
+	
 	# find files matching pattern
 	# matches = map( x->match(pattern,x), fileNames )
 	# mask = falses(matches)
@@ -240,6 +252,7 @@ function find_samples(fastqPath::String, namePrefix::String="", pattern::Regex=r
 	for s in samples
 		n = length(s.fastq)
 		println(log, "Found sample \"$(s.name)\" with $n fastq files.")
+		#println("Found sample \"$(s.name)\" with $n fastq files.")
 	end
 	samples
 end
@@ -263,7 +276,7 @@ function bwaindex(reference::String; log=devnull)
 	ret
 end
 
-function align_samples!(samples::Vector{Sample}, adapters::String,
+function align_samples(samples::Vector{Sample}, adapters::String,
                         outFolder::String, tempFolder::String,
                         log::IO;
                         maxAlignIterations::Int=5, consensusMinSupport::Int=1, 
@@ -271,9 +284,9 @@ function align_samples!(samples::Vector{Sample}, adapters::String,
                         keepUnmapped::Bool=true,
                         nbrThreads::Int=4)
 
-	println(log, "[bwa] ", bwaversion())
-	println(log, "[samtools] ", samtoolsversion())
-	println(log, "[fastq-mcf] ", fastqmcfversion())
+	# println(log, "[bwa] ", bwaversion())
+	# println(log, "[samtools] ", samtoolsversion())
+	# println(log, "[fastq-mcf] ", fastqmcfversion())
 	
 	# Make sure all the references have bwa index files - before we start threading!!!
 	refsPathsLocal = unique([s.referencePathLocal for s in samples])
@@ -288,45 +301,50 @@ function align_samples!(samples::Vector{Sample}, adapters::String,
 
 	# Threading modelled after the pmap implementation in http://docs.julialang.org/en/release-0.4/manual/parallel-computing/ (NB: not the same as actual pmap())
 	# --------------------------------------------------------------------------
-	procList = procs() # find the available processes
-	n = length(samples)
-	i = 1
-	# function to produce the next work item from the queue.
-	# in this case it's just an index.
-	nextidx() = (idx=i; i+=1; idx)
-	@sync begin
-		for p in procList
-			if p != myid() || length(procList)==1
-				@async begin
-					while true
-						idx = nextidx()
-						if idx > n
-							break
-						end
+	# procList = procs() # find the available processes
+	# n = length(samples)
+	# i = 1
+	# # function to produce the next work item from the queue.
+	# # in this case it's just an index.
+	# nextidx() = (idx=i; i+=1; idx)
+	# @sync begin
+	# 	for p in procList
+	# 		if p != myid() || length(procList)==1
+	# 			@async begin
+	# 				while true
+	# 					idx = nextidx()
+	# 					if idx > n
+	# 						break
+	# 					end
 
-						s = samples[idx]
+	# 					s = samples[idx]
 
-						println("Aligning sample $(s.name)")
+	# 					println("Aligning sample $(s.name)")
 
-						# align in worker thread
-						samples[idx], logStr = fetch(@spawnat p align_single!(s, adapters, outFolder, tempFolder, maxAlignIterations, consensusMinSupport, consensusIndelMinSupport, keepUnmapped, nbrThreads))
-						print(log, logStr); flush(log)
-						println("Finished aligning sample $(s.name)")
-					end
-				end
-			end
-		end
+	# 					# align in worker thread
+	# 					samples[idx], logStr = fetch(@spawnat p align_single!(s, adapters, outFolder, tempFolder, maxAlignIterations, consensusMinSupport, consensusIndelMinSupport, keepUnmapped, nbrThreads))
+	# 					print(log, logStr); flush(log)
+	# 					println("Finished aligning sample $(s.name)")
+	# 				end
+	# 			end
+	# 		end
+	# 	end
+	# end
+
+	aligned_samples = Vector{Sample}(undef, length(samples))
+	for (i, s) in enumerate(samples)
+		# println("Aligning sample $(s.name)")
+		println("$s $adapters $outFolder $tempFolder $maxAlignIterations $consensusMinSupport $consensusIndelMinSupport $keepUnmapped $nbrThreads")
+		aligned_sample, logStr = align_single(s, adapters, outFolder, tempFolder, maxAlignIterations, consensusMinSupport, consensusIndelMinSupport, keepUnmapped, nbrThreads)
+		aligned_samples[i] = aligned_sample
+		print(log, logStr); flush(log)
+		# println("Finished aligning sample $(s.name)")
 	end
 	# --------------------------------------------------------------------------
+	aligned_samples
 end
  
 function main()
-# --- Synapse login ------------------------------------------------------------
-
-    # syn = SynapseClient.login()
-    syn=nothing
-    isdir("synapsecache") || mkdir("synapsecache")
-
 # --- Setup --------------------------------------------------------------------
     # Set clean=true to rerun alignment. For clean=false, alignment will only be run if the log file is missing (i.e. no previous alignment was done).
     clean = true 
@@ -342,7 +360,7 @@ function main()
     # Where to find sample .fastq files. Synapse Folder ID or local folder. Synapse ID should point to "MyProject/Raw Data/Sequencing".
     fastqPath = joinpath(projectFolder, "fastqs")
 
-
+    bamDirectory = joinpath(projectFolder, "bams")
     # This prefix will be added to all sample names. Normally same as runName. Set to "" if the .fastq files already have this prefix.
     namePrefix = runName
 
@@ -374,7 +392,7 @@ function main()
     clean = clean || !isfile(logFile)
 
     if clean
-        makecleanfolder("bam") || return
+        makecleanfolder(bamDirectory) || return
         makecleanfolder("temp") || return
     else
         println("Skipping Alignment [clean=false]")
@@ -392,10 +410,11 @@ function main()
         println(log,"Starting alignment batch run at $(now())"); flush(log)
         samples = find_samples(fastqPath, namePrefix, log=log); flush(log)
 
-        assign_reference!(samples, refs,log=log); flush(log)
+        assign_reference!(samples, refs, log=log); flush(log)
+	
+        aligned_samples = align_samples(samples, adapters, bamDirectory, "temp",log,consensusMinSupport=consensusMinSupport); flush(log)
 
-        align_samples!(samples, adapters, joinpath(projectFolder, "bam"), "temp",log,consensusMinSupport=consensusMinSupport); flush(log)
-        reference_sanity_check(samples, refs, log=log)
+        reference_sanity_check(aligned_samples, refs, log=log)
 
         duration = time()-start
         println(log,"Finished alignment batch run in $(duration)s."); flush(log)

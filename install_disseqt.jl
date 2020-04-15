@@ -24,6 +24,8 @@ Pkg.add("Gadfly")
 Pkg.add("DataFrames")
 Pkg.add("DataStrutures")
 Pkg.add("Libz")
+Pkg.add("CSV")
+
 github_registry("BioJulia/BioJuliaRegistry")
 github_install("rasmushenningsson/SynapseClient.jl")
 github_install("rasmushenningsson/DISSEQT.jl")
