@@ -1,13 +1,9 @@
-import Cairo
-export Cairo
+using ArgParse
 
-import Compose
-import Fontconfig
-
-#using Distributed
-#nprocs()==1 && addprocs()
 using DISSEQT
 using DISSEQT.AlignUtils
+
+# I fully realize this is madness
 import DISSEQT.AlignUtils.singlefastq
 import DISSEQT.AlignUtils.concatfastq
 import DISSEQT.AlignUtils.removetempfiles
@@ -20,8 +16,6 @@ import DISSEQT.AlignUtils.bamindex
 import DISSEQT.AlignUtils.bwaindex
 import DISSEQT.AlignUtils.bwaindexfilescreated
 
-#using SynapseClient
-#using DISSEQT.SynapseTools
 using JLD
 using Dates
 
@@ -30,6 +24,7 @@ mutable struct DiskBuffer
 	filename::String
 	stream#::IOStream
 end
+
 DiskBuffer() = DiskBuffer(tempname(),nothing)
 openbuf(db::DiskBuffer) = db.stream = open(db.filename, "w")
 function closebuf(db::DiskBuffer)::String
@@ -57,27 +52,16 @@ function printifinfo(log,str)
 end
 
 
-function getreferenceinfo(ref::Tuple{T,String}, referenceFolder::String) where {T}
-    path = joinpath(referenceFolder, ref[2])
-    ref[1], ref[2], path, path
-end
+#function getreferenceinfo(ref::Tuple{T,String}, reference_genome::String) where {T}
+#    ref[1], ref[2], reference_genome, reference_genome 
+#end
 
-function getreferenceinfo(refs::Vector, referenceFolder::String)
-    [getreferenceinfo(r, referenceFolder) for r in refs]
+function getreferenceinfo(refs::Vector, reference_genome::String)
+    #[getreferenceinfo(r, referenceFolder) for r in refs]
+    
+    # Weird redundancy for backward compatibility
+    [(r[1], r[2], reference_genome, reference_genome) for r in refs]
 end
-
-function bwaversion()
-	"foo"
-end
-
-function samtoolsversion()
-	"bar"
-end
-
-function fastqmcfversion()
-	"baz"
-end
-
 
 function align_sample(sample::Sample, adapters::String,
 	                   outFolder::String, tempFolder::String; 
@@ -85,7 +69,7 @@ function align_sample(sample::Sample, adapters::String,
 	                   maxAlignIterations::Int=5, consensusMinSupport::Int=100,
 	                   consensusIndelMinSupport::Int=consensusMinSupport,
 	                   keepUnmapped::Bool=true,
-	                   nbrThreads::Int=4)
+	                   threads::Int=1)
 	tempFiles = String[]
 	# make sure fastq-files are concatenated
 	ret, singleFastq = singlefastq(sample.fastq, sample.fastq2, joinpath(tempFolder, sample.name), tempFiles, log)
@@ -111,7 +95,7 @@ function align_sample(sample::Sample, adapters::String,
 	for i=1:maxAlignIterations
 
 		# align
-		ret = bwaalign(trimmedFastq, unsortedBam, currReference; nbrThreads=nbrThreads, log=log, keepUnmapped=keepUnmapped)
+		ret = bwaalign(trimmedFastq, unsortedBam, currReference; nbrThreads=threads, log=log, keepUnmapped=keepUnmapped)
 		if ret != 0
 			removetempfiles(tempFiles, log=log)
 			printiferror(globalLog, "$(sample.name): Alignment failed.")
@@ -160,7 +144,7 @@ function align_sample(sample::Sample, adapters::String,
 
 
 	sample.bam = joinpath(outFolder, "$(sample.name).bam")
-	ret = bamsort(unsortedBam, sample.bam; nbrThreads=nbrThreads, log=log)
+	ret = bamsort(unsortedBam, sample.bam; nbrThreads=threads, log=log)
 	if ret != 0
 		removetempfiles(tempFiles, log=log)
 		printiferror(globalLog, "$(sample.name): Bam sorting failed.")
@@ -189,7 +173,7 @@ function align_single(sample::Sample, adapters::String,
                        maxAlignIterations::Int, consensusMinSupport::Int, 
 	                   consensusIndelMinSupport::Int,
 	                   keepUnmapped::Bool,
-                       nbrThreads::Int)
+                       threads::Int)
 	log = open(joinpath(outFolder, "$(sample.name).log"), "w")
 	globalLog = IOBuffer()
 
@@ -199,7 +183,7 @@ function align_single(sample::Sample, adapters::String,
 			          consensusMinSupport=consensusMinSupport,
 			          consensusIndelMinSupport=consensusIndelMinSupport,
 		              keepUnmapped=keepUnmapped,
-			          nbrThreads=nbrThreads)
+			          threads=threads)
 	catch err
 		printiferror(globalLog, string(err))
 	end
@@ -210,11 +194,11 @@ end
 
  
 # utility function that tries to identify sample names in folder were each sample might have multiple fastq files
-function find_samples(fastqPath::String, namePrefix::String="", pattern::Regex=r".+(?=_L\d+_R1_\d+.fastq.gz$)"; log=devnull)
+function find_samples(fastqPath::String, pattern::Regex=r".+(?=_L\d+_R1_\d+.fastq.gz$)"; log=devnull)
 	
-	if namePrefix != "" && namePrefix[1] != '_'
-		namePrefix = namePrefix * "_"
-	end
+	# if namePrefix != "" && namePrefix[1] != '_'
+	# 	namePrefix = namePrefix * "_"
+	# end
 
 	if isempty(fastqPath)
 		error("Could not find \"$runName\" in \"$fastqPath\".")
@@ -246,7 +230,8 @@ function find_samples(fastqPath::String, namePrefix::String="", pattern::Regex=r
 	map!( x->x.match, matchingNames, matches )
 
 	# put all files with the same match together (and add the run name to the sample name)
-	samples = [ Sample("$namePrefix$u", filePaths[matchingNames.==u]) for u in unique(matchingNames) ]
+	#samples = [ Sample("$namePrefix$u", filePaths[matchingNames.==u]) for u in unique(matchingNames) ]
+	samples = [ Sample("$u", filePaths[matchingNames.==u]) for u in unique(matchingNames) ]
 
 
 	for s in samples
@@ -282,11 +267,8 @@ function align_samples(samples::Vector{Sample}, adapters::String,
                         maxAlignIterations::Int=5, consensusMinSupport::Int=1, 
                         consensusIndelMinSupport::Int=consensusMinSupport,
                         keepUnmapped::Bool=true,
-                        nbrThreads::Int=4)
+                        threads::Int=4)
 
-	# println(log, "[bwa] ", bwaversion())
-	# println(log, "[samtools] ", samtoolsversion())
-	# println(log, "[fastq-mcf] ", fastqmcfversion())
 	
 	# Make sure all the references have bwa index files - before we start threading!!!
 	refsPathsLocal = unique([s.referencePathLocal for s in samples])
@@ -298,44 +280,10 @@ function align_samples(samples::Vector{Sample}, adapters::String,
 		end
 	end
 
-
-	# Threading modelled after the pmap implementation in http://docs.julialang.org/en/release-0.4/manual/parallel-computing/ (NB: not the same as actual pmap())
-	# --------------------------------------------------------------------------
-	# procList = procs() # find the available processes
-	# n = length(samples)
-	# i = 1
-	# # function to produce the next work item from the queue.
-	# # in this case it's just an index.
-	# nextidx() = (idx=i; i+=1; idx)
-	# @sync begin
-	# 	for p in procList
-	# 		if p != myid() || length(procList)==1
-	# 			@async begin
-	# 				while true
-	# 					idx = nextidx()
-	# 					if idx > n
-	# 						break
-	# 					end
-
-	# 					s = samples[idx]
-
-	# 					println("Aligning sample $(s.name)")
-
-	# 					# align in worker thread
-	# 					samples[idx], logStr = fetch(@spawnat p align_single!(s, adapters, outFolder, tempFolder, maxAlignIterations, consensusMinSupport, consensusIndelMinSupport, keepUnmapped, nbrThreads))
-	# 					print(log, logStr); flush(log)
-	# 					println("Finished aligning sample $(s.name)")
-	# 				end
-	# 			end
-	# 		end
-	# 	end
-	# end
-
 	aligned_samples = Vector{Sample}(undef, length(samples))
 	for (i, s) in enumerate(samples)
 		# println("Aligning sample $(s.name)")
-		println("$s $adapters $outFolder $tempFolder $maxAlignIterations $consensusMinSupport $consensusIndelMinSupport $keepUnmapped $nbrThreads")
-		aligned_sample, logStr = align_single(s, adapters, outFolder, tempFolder, maxAlignIterations, consensusMinSupport, consensusIndelMinSupport, keepUnmapped, nbrThreads)
+		aligned_sample, logStr = align_single(s, adapters, outFolder, tempFolder, maxAlignIterations, consensusMinSupport, consensusIndelMinSupport, keepUnmapped, threads)
 		aligned_samples[i] = aligned_sample
 		print(log, logStr); flush(log)
 		# println("Finished aligning sample $(s.name)")
@@ -343,41 +291,57 @@ function align_samples(samples::Vector{Sample}, adapters::String,
 	# --------------------------------------------------------------------------
 	aligned_samples
 end
+
+function arguments()
+	
+    s = ArgParseSettings()
+    
+    @add_arg_table! s begin
+
+        "--fastqs"
+            help = "Directory containing .fastq.gz files"
+            required = true
+
+        "--bams"
+            help = "Directory to which .bam files will be written"    
+            required = true
+
+        "--adapters"
+            help = "FASTA-formatted file containing adater sequences"
+            required = true
+
+        "--reference-genome"
+            help = "FASTA-formattedreference genome"
+            required = true
+
+        "--consensus-min-support"
+            help = "Minimum consensus support during alignment"
+            arg_type = Int  # this might need to be a float
+            default = 100
+
+        "--threads"
+            help = "Number of cpu threads to use [1]"
+            arg_type = Int
+            default = 1
+    end
+
+    return parse_args(s)
+end
  
 function main()
+
+    args = arguments()
+    println(args["fastqs"])
 # --- Setup --------------------------------------------------------------------
-    # Set clean=true to rerun alignment. For clean=false, alignment will only be run if the log file is missing (i.e. no previous alignment was done).
-    clean = true 
-
-    # Name of the run. (Should corrsespond to a subfolder of fastqPath.)
-    runName = "664V9AAXX"
-    projectFolder = runName # VignuzziLabPublic/Projects/FitnessLandscapes
-    alignmentFolder = joinpath(projectFolder, "Analysis", "Alignment")
-
-    # Set uploadPath="synapseID" to upload files after running. Should point to "MyProject/Analysis/Alignment" folder. Set upload=nothing to skip uploading.
-    uploadPath = alignmentFolder
-
-    # Where to find sample .fastq files. Synapse Folder ID or local folder. Synapse ID should point to "MyProject/Raw Data/Sequencing".
-    fastqPath = joinpath(projectFolder, "fastqs")
-
-    bamDirectory = joinpath(projectFolder, "bams")
-    # This prefix will be added to all sample names. Normally same as runName. Set to "" if the .fastq files already have this prefix.
-    namePrefix = runName
-
-    # Where to find reference genomes. Synapse Folder ID or local folder. [Reference genomes will be uploaded if local.]
-    # Synapse ID should point to "MyProject/Analysis/Alignment/ReferenceGenomes".
-    referenceFolder = joinpath(projectFolder, "reference_genomes")
 
     # Rules for matching sample IDs to references.
     # The rule can either be a Regex or a function taking the sample ID and returning true/false.
-    refs = [(r"_p\d+_WT_", "WT.fasta"),
-            (r"_p\d+_299_", "CVB3_299.fasta"), 
-            (r"_p\d+_372_", "CVB3_372.fasta")]
+    # refs = [(r"_p\d+_WT_", "WT.fasta"),
+    #        (r"_p\d+_299_", "CVB3_299.fasta"), 
+    #        (r"_p\d+_372_", "CVB3_372.fasta")]
             #(r"Undetermined", "phiX174.fasta")] # Always keep this unless PhiX wasn't used in the sequencing.
-    refs = getreferenceinfo(refs, referenceFolder) # Get path/synapse id and local path info.
-
-    # File with adapters. Synapse File ID or local file. [Uploaded if local.]
-    adapters = joinpath(projectFolder, "adapters", "adapters.fa")
+    refs = [(r".*", args["reference-genome"])]
+    refs = getreferenceinfo(refs, args["reference-genome"]) 
 
     # Local logFile.
     logFile = "AlignUtils.log"
@@ -385,59 +349,37 @@ function main()
     # Local file with sample info. Required for Uploading of a previously run alignment.
     sampleInfoFile = "sampleInfo.jld"
 
-    # Minimum support for updating consensus during alignment. (Otherwise fallback to reference sequence.)
-    consensusMinSupport = 100
-
-# --- Cleanup ------------------------------------------------------------------
-    clean = clean || !isfile(logFile)
-
-    if clean
-        makecleanfolder(bamDirectory) || return
-        makecleanfolder("temp") || return
-    else
-        println("Skipping Alignment [clean=false]")
-    end
-
+    mkpath(args["bams"]) 
+    mkpath("temp") 
 
 # --- Alignment ----------------------------------------------------------------
 
     samples = Sample[]
-    if clean
-        log = open(logFile,"w")
-        isfile(sampleInfoFile) && rm(sampleInfoFile)
+    log = open(logFile,"w")
+    isfile(sampleInfoFile) && rm(sampleInfoFile)
 
-        start = time()
-        println(log,"Starting alignment batch run at $(now())"); flush(log)
-        samples = find_samples(fastqPath, namePrefix, log=log); flush(log)
+    start = time()
+    println(log,"Starting alignment batch run at $(now())"); flush(log)
+    samples = find_samples(args["fastqs"], log=log); flush(log)
 
-        assign_reference!(samples, refs, log=log); flush(log)
-	
-        aligned_samples = align_samples(samples, adapters, bamDirectory, "temp",log,consensusMinSupport=consensusMinSupport); flush(log)
+    assign_reference!(samples, refs, log=log); flush(log)
 
-        reference_sanity_check(aligned_samples, refs, log=log)
+    aligned_samples = align_samples(samples, 
+                                    args["adapters"],
+                                    args["bams"],
+                                    "temp",
+                                    log,
+                                    threads=args["threads"],
+                                    consensusMinSupport=args["consensus-min-support"]); flush(log)
 
-        duration = time()-start
-        println(log,"Finished alignment batch run in $(duration)s."); flush(log)
+    reference_sanity_check(aligned_samples, refs, log=log)
 
-        close(log)
+    duration = time()-start
+    println(log,"Finished alignment batch run in $(duration)s."); flush(log)
 
-        save(sampleInfoFile, "samples", samples, compress=true)
-    end
+    close(log)
 
-# --- Upload -------------------------------------------------------------------
-#     if uploadPath != nothing
-#         if !clean # reload sample info if necessary
-#             try
-#                 samples = load(sampleInfoFile, "samples")
-#             catch
-#                 println("Sample info file is missing or corrupt. Please rerun alignment.")
-#             end
-#         end
-# 
-#         refPaths = [r[3] for r in refs]
-#         uploadaligned(syn, uploadPath, runName, @__FILE__, logFile, adapters, refPaths, samples)
-#     end
-
+    save(sampleInfoFile, "samples", samples, compress=true)
 
 end
 

@@ -26,6 +26,7 @@ Pkg.add("DataStrutures")
 Pkg.add("Libz")
 Pkg.add("CSV")
 Pkg.add("SubMatrixSelectionSVD")
+Pkg.add("ArgParse")
 
 github_registry("BioJulia/BioJuliaRegistry")
 github_install("rasmushenningsson/SynapseClient.jl")

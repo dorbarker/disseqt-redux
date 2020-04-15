@@ -90,9 +90,6 @@ function sequence_space(dwarms::Array, limitOfDetection::AnnotatedArray, nbrDims
     coords = Coord.cartesian(xmin=log10(σThresholds[1]), xmax=log10(σThresholds[end]), ymin=0)
     pl = plot(df,x=:Sigma,y=:ProjectionScore,color=:SignalNbr,Geom.line,coords,
               Scale.x_log10,Scale.color_discrete(),Guide.xlabel("σ Threshold"),Guide.ylabel("Projection Score"),Guide.colorkey(title="Signal"))
-    # markforupload!(uploads, "SequenceSpacePlots", saveplot(pl, [:png,:svg,:pdf], "plots/sms_projectionscore", width=29.7cm/2, height=21cm/2), dependencies)
-    markforupload!(uploads, "SequenceSpacePlots", saveplot(pl, [:png,:pdf], "plots/sms_projectionscore", width=29.7cm/2, height=21cm/2), dependencies)
-
 
 
     # make SMSSVD plots
