@@ -1,6 +1,4 @@
-using Distributed
-#nprocs()==1 && addprocs()
-#using SynapseClient
+using ArgParse
 using DISSEQT
 using DISSEQT.AlignUtils
 using DISSEQT.SynapseTools
@@ -81,66 +79,65 @@ function computecodonfrequencies(samplePaths::Vector{String},
 	end
 	nothing
 end
+
+
+function arguments()
+
+    s = ArgParseSettings()
+
+    @add_arg_table! s begin
+        "--bams"
+            help = "Directory containing .bam files"
+            required = true
+        "--swarms"
+            help = "Directory to which the swarm files will be saved"
+            required = true
+
+
+    end
+    return parse_args(s)
+end
  
 function main()
-# --- Synapse login ------------------------------------------------------------
-    # syn = nothing # set syn=nothing if working locally
-    # syn = SynapseClient.login()
 
+    args = arguments()
 # --- Setup --------------------------------------------------------------------
-    # Set clean=true to rerun swarm inference. For clean=false, swarm inference will only be run if the log file is missing (i.e. no previous swarm inference was done).
-    clean = true 
 
     runName = "664V9AAXX"
-    projectFolder = "664V9AAXX"
     
-    alignmentFolder = joinpath(projectFolder, "alignment")
-
-    # Set uploadPath="synapseID" to upload files after running. Should point to "MyProject/Analysis/Alignment" folder. Set upload=nothing to skip uploading.
-    uploadPath = alignmentFolder
-
-    # Where to find sample .bam files. Synapse Folder ID or local folder. Synapse ID should point to "MyProject/Analysis/Alignment/Bam".
-    bamPath = joinpath(projectFolder, "bams")
-
-    # Name of the run. (Should corrsespond to a subfolder of bamPath if in Synapse.)
-
     # Local logFile.
     logFile = "MutantSwarms.log"
 
     # Specify which strands to include in each run of the swarm computations. 
     strands = [:both, :forward, :reverse]
 
-# --- Cleanup ------------------------------------------------------------------
-    clean = clean || !isfile(logFile)
+    fwd = joinpath(args["swarms"], "forward")
+    rev = joinpath(args["swarms"], "reverse")
 
-    mutant_swarms_dir = joinpath(projectFolder, "mutant_swarms")
-    fwd = joinpath(mutant_swarms_dir, "forward")
-    rev = joinpath(mutant_swarms_dir, "reverse")
-    if clean
-        makecleanfolder(mutant_swarms_dir) || return
-        :forward in strands && mkdir(fwd) # subfolder for forward strand
-        :reverse in strands && mkdir(rev) # subfolder for reverse strand
-    else
-        println("Skipping Swarm Inference [clean=false]")
-    end
-
+    mkpath(args["swarms"]) 
+    :forward in strands && mkpath(fwd) # subfolder for forward strand
+    :reverse in strands && mkpath(rev) # subfolder for reverse strand
 
 # --- Compute Mutant Swarms ----------------------------------------------------
     # find samples
-    samplePaths, sampleNames = find_aligned(bamPath, runName)
+    samplePaths, sampleNames = find_aligned(args["bams"], runName)
     
-    strand2folder = Dict(:both=>mutant_swarms_dir,:forward=>fwd:reverse=>rev)
-    if clean
-        # compute codon frequencies
-        log = open(logFile, "w")
-        for strand in strands
-            outFolder = strand2folder[strand]
+    strand2folder = Dict(:both=>args["swarms"],:forward=>fwd, :reverse=>rev)
+    # compute codon frequencies
+    log = open(logFile, "w")
+    
+    for strand in strands
+        outFolder = strand2folder[strand]
 
-            println(log,"--- Computing mutant swarms for $strand strand(s) ---"); flush(log)
-            computecodonfrequencies(samplePaths, sampleNames, outFolder, bamDir=bamPath, strands=strand, log=log)
-        end
-        close(log)
+        println(log,"--- Computing mutant swarms for $strand strand(s) ---"); flush(log)
+        computecodonfrequencies(samplePaths,
+                                sampleNames,
+                                outFolder,
+                                bamDir=args["bams"],
+                                strands=strand,
+                                log=log)
     end
+    close(log)
 end
 
 main()
