@@ -1,6 +1,4 @@
-#using SynapseClient
-#using DISSEQT.AlignUtils
-#using DISSEQT.SynapseTools
+using ArgParse
 using DataFrames
 using Gadfly
 using DataStructures
@@ -37,7 +35,7 @@ function readcoverage(inputs::AbstractArray; kwargs...)
 	covMatrices
 end
 
-function listaligned(path::AbstractString, runName::AbstractString)
+function listaligned(path::AbstractString)
 
     paths = readdir(path, join=true)
     names = readdir(path, join=false)
@@ -47,8 +45,8 @@ function listaligned(path::AbstractString, runName::AbstractString)
     paths[mask], names[mask]
 end
 
-function find_aligned(path::AbstractString, runName::AbstractString)
-	paths, names = listaligned(path, runName)
+function find_aligned(path::AbstractString)
+	paths, names = listaligned(path)
 	names = map(x->x[1:end-4], names) # keep only matches and remove ".bam" ending
 	paths, names
 end
@@ -114,31 +112,18 @@ function _savecoverageplot(layer,format,outPath,args...)
 end
 
 
-function coverageplots(runName, 
-		       bamPath;
-                       outputFolder="plots", outFormats=[:png, :pdf], 
-                       log=stdout)
+function coverageplots(bamPath, outputFolder; log=stdout)
 # --- Setup --------------------------------------------------------------------
-    # Where to find sample .bam files. Synapse Folder ID or local folder. Synapse ID should point to "MyProject/Analysis/Alignment/Bam".
-    #bamPath = childpath(syn, alignmentFolder, "Bam")
 
+    outFormats=[:png, :pdf]
     alignLogFile = "AlignUtils.log"
 # --- Cleanup ------------------------------------------------------------------
-    isdir(outputFolder) || mkdir(outputFolder)
+    mkpath(outputFolder) 
 
 # --- Make plots ---------------------------------------------------------------
     # find samples
-    samplePaths, sampleNames = find_aligned(bamPath, runName)
+    samplePaths, sampleNames = find_aligned(bamPath)
     references = referencefromlog(alignLogFile, sampleNames)
-
-    #@assert !any(isempty,references)
-    
-    #println(log, "Downloading samples")
-    #localPaths = map(x->localpath(syn,x,downloadLocation=bamCache,ifcollision="overwrite.local"), samplePaths)
-
-    # filesToUpload = Vector{String}()
-    # fileSubFolder = Vector{String}()
-    # activities = Vector{Activity}() # Synapse Provenance
 
     # split samples by reference sequence
     for reference in unique(references)
@@ -149,16 +134,8 @@ function coverageplots(runName,
         filesCreated, segments = _coverageplots(samplePaths[mask], 
 						sampleNames[mask],
 						outputFolder,
-						"readcoverage_$(runName)_$reference",
+						"readcoverage_$(basename(reference))",
 						outFormats)
-        # for (f,s) in zip(filesCreated,segments)
-        #     push!(filesToUpload, f)
-        #     push!(fileSubFolder, s)
-        #     act = Activity(activityName)
-        #     used(act, samplePaths[mask])
-        #     used(act, alignLogFile)
-        #     push!(activities, act)
-        # end
     end
 end
 
@@ -213,4 +190,28 @@ function _coverageplots(samplePaths, sampleNames, outputFolder, outName, outForm
     outFiles, outSegment
 end
 
-coverageplots(runName, joinpath(runName, "bams"); outputFolder="plots", outFormats=[:png, :pdf])
+function arguments()
+
+    s = ArgParseSettings()
+
+    @add_arg_table! s begin
+        "--bams"
+            help = "Directory containing .bam files"
+            required = true
+        "--output"
+            help = "Output directory"
+            required = true          
+    end
+
+    return parse_args(s)
+
+end
+
+function main()
+    args = arguments()
+
+    coverageplots(args["bams"], args["output"])
+
+end
+
+main()
