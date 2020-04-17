@@ -1,109 +1,97 @@
-module LimitOfDetectionScript
-
-using SynapseClient
+using ArgParse
 using DISSEQT
-using DISSEQT.SynapseTools
 using DISSEQT.AnnotatedArrays
 using Statistics
 using DataFrames
 using CSV
 using JLD
 
+function arguments()
+    s = ArgParseSettings()
 
-function cachemetadata(syn,alignmentFolder,metadataID)
-    metadataCacheFilename = "metadatacache.csv"
-    metadata = DataFrame()
-    if isfile(metadataCacheFilename)
-        metadata = CSV.read(metadataCacheFilename; missingstrings=["","NA"])
-    else
-        # Get metadata (metadataID can be the synapse ID of a .csv file or of a folder containing .csv files).
-        metadata = getsamplemetadata(syn, metadataID, :Rejected=>"No") # Always remove rejected samples
+    @add_arg_table! s begin
 
-        # extend metadata
-        appendswarmids!(syn,metadata,alignmentFolder,[:both,:forward,:reverse])
-        appendalignedids!(syn,metadata,alignmentFolder)
+        "--bams"
+            help = "Directory containing .bam files"
+            required = true
 
-        # download swarms and consensus sequences
-        downloadswarms!(syn,metadata,cacheDir="MutantSwarms",[:both,:forward,:reverse])
-        downloadconsensuses!(syn,metadata,cacheDir="MutantSwarms")
+        "--swarms"
+            help = "Directory containing mutant swarms"
+            required = true
 
-        CSV.write(metadataCacheFilename, metadata; missingstring="NA")
+        "--metadata"
+            help = "CSV metadata file"
+            required = true
+
+        "--features"
+            help = "CSV gene features file"
+            required = true        
+
+        "--output"
+            help = "JLD file path"
+            required = true
+
     end
-    metadata
+    return parse_args(s)
 end
 
 
+function loadswarms(swarms::String, bams::String)
+    # replaces broken function from DISSEQT
+    
+    
+    swarm_files = readdir(swarms, join=true)
+ 
+    sample_names = map(x -> x |> basename |> splitext |> first, swarm_files)
+
+    consensus_paths = map(x -> joinpath(bams, x * "_consensus.fasta"), sample_names)
+
+    # loadswarm() from DISSEQT
+    loaded_swarms = map((sample, swarm, consensus) -> loadswarm(sample, swarm, consensus), sample_names, swarm_files, consensus_paths)
+    cat(loaded_swarms..., dims = 5) 
+
+end
+
 function main()
-    #syn = SynapseClient.login()
 
-    # prohectFolder should point to MyProject folder (containing subfolders Metadata and Analysis)
-    projectFolder   = "syn11639899" # VignuzziLabPublic/Projects/FitnessLandscapes
-    # analysisFolder  = getchildbyname(syn, projectFolder, "Analysis")
-    # alignmentFolder = getchildbyname(syn, analysisFolder, "Alignment")
-    # referenceFolder = getchildbyname(syn, alignmentFolder, "ReferenceGenomes")
+    args = arguments()
 
-    analysisFolder  = joinpath(projectFolder, "analysis")
-    alignmentFolder = joinpath(analysisFolder, "alignments")
-    referenceFolder = joinpath(alignmentFolder, "reference_genomes")
+    metadata = CSV.read(args["metadata"]) 
 
-    #iisdir("MutantSwarms") || mkdir("MutantSwarms")
-    #isdir("MutantSwarms/forward") || mkdir("MutantSwarms/forward")
-    #isdir("MutantSwarms/reverse") || mkdir("MutantSwarms/reverse")
-
-    # set to true to upload files
-    # doUpload = true
-    # uploadName = "fitness landscapes invitro"
-
-    metadataID = joinpath(projectFolder, "metadata", "fitness landscapes invitro.csv")
-    #metadata = cachemetadata(syn, alignmentFolder, metadataID)
-
-
-    # get CVB3 feature list
-    featureFileID = joinpath(referenceFolder,"CVB3_features.csv")
-    features = CSV.read(featureFileID; missingstrings=["","NA"])
+    features = CSV.read(args["features"]; missingstrings=["","NA"])
 
     positions = featurepositions(features, "ORF") # coding positions
 
     # load swarms
-    swarms  = loadswarm(metadata[:SampleID],metadata[:SwarmPath],metadata[:ConsensusPath])
-    swarmsF = loadswarm(metadata[:SampleID],metadata[:SwarmForwardPath],metadata[:ConsensusPath])
-    swarmsR = loadswarm(metadata[:SampleID],metadata[:SwarmReversePath],metadata[:ConsensusPath])
-
+    swarms, swarmsF, swarmsR = map(x -> loadswarms(x, args["bams"]), readdir(args["swarms"], join=true)) 
 
     coverage = dropdims(swarms[:coverage]; dims=(1,2,3))
+    
     meanCoverage = mean(coverage[positions,:]; dims=1)[:]
-
+    println(meanCoverage)
     # filter by mean read coverage at coding sites
     sampleMask = meanCoverage .>= 1000
+
+    println(sampleMask)
+
     println("Removed ", count(.~sampleMask), " samples due to low coverage.")
     swarms  = swarms[:,:,:,:,sampleMask]
     swarmsF = swarmsF[:,:,:,:,sampleMask]
     swarmsR = swarmsR[:,:,:,:,sampleMask]
+
     metadata = metadata[sampleMask,:]
 
 
     println("Total number of samples used: ", count(sampleMask))
-
     
     
-    #uploads = UploadList()
-    dependencies = unique(vcat(featureFileID, metadata[:SwarmID], metadata[:SwarmForwardID], metadata[:SwarmReverseID], metadata[:MetadataID]))
-
-
-    lod = limitofdetection(swarms, swarmsF, swarmsR, groupID=metadata[:Run])
+    lod = limitofdetection(swarms, swarmsF, swarmsR, groupID=metadata[!, :Run])
     lodDict = Dict( string(p[1])=>p[2] for p in pairs(convert(Dict,lod)) )
-    lodfn = "limitofdetection.jld"
-    save(lodfn, lodDict)
-    # markforupload!(uploads, "", lodfn, dependencies)
+    
+    save(args["output"], lodDict)
 
-
-    # doUpload && uploadfiles(syn, createchildfolder(syn, analysisFolder, "LimitOfDetection", uploadName), uploads, @__FILE__, "Limit of Detection")
-
-
-    #swarms,swarmsF,swarmsR,lod,metadata    
     nothing
 end
 
-end
-LimitOfDetectionScript.main();
+main();
 

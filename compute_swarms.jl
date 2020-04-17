@@ -111,6 +111,7 @@ function main()
     # Specify which strands to include in each run of the swarm computations. 
     strands = [:both, :forward, :reverse]
 
+    both = joinpath(args["swarms"], "both")
     fwd = joinpath(args["swarms"], "forward")
     rev = joinpath(args["swarms"], "reverse")
 
@@ -122,7 +123,7 @@ function main()
     # find samples
     samplePaths, sampleNames = find_aligned(args["bams"], runName)
     
-    strand2folder = Dict(:both=>args["swarms"],:forward=>fwd, :reverse=>rev)
+    strand2folder = Dict(:both=>both, :forward=>fwd, :reverse=>rev)
     # compute codon frequencies
     log = open(logFile, "w")
     
