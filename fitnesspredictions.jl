@@ -17,6 +17,8 @@ function getsamplefitness(fitness_path::String)
     fitness = CSV.read(fitness_path)
     rename!(fitness, :MetadataID => :FitnessID)
 
+end
+
 # put mutagen doses into low,medium,high categories
 function addlevel!(metadata)
     levelDict = Dict(("5FU","50uM")=>"Low", ("5FU","100uM")=>"Medium", ("5FU","150uM")=>"Medium", ("5FU","200uM")=>"High", ("AML","50uM")=>"Low", ("AML","100uM")=>"Medium", ("AML","200uM")=>"High", ("AZC","50uM")=>"Low", ("AZC","100uM")=>"Medium", ("AZC","200uM")=>"Medium", ("AZC","300uM")=>"High", ("Mn","0.25mM")=>"Medium", ("Mn","0.33mM")=>"Medium", ("Mn","0.5mM")=>"High", ("Mock","0uM")=>"Low", ("RIBA","50uM")=>"Low", ("RIBA","100uM")=>"Medium", ("RIBA","200uM")=>"Medium", ("RIBA","300uM")=>"High")
@@ -99,8 +101,6 @@ function main()
     metadata = CSV.read(args["metadata"])
 
 
-    seqSpaceRepID = getchildbyname(syn, analysisFolder, "SequenceSpace", uploadName, "SequenceSpaceRepresentation", "seqspacerepresentation.jld")
-    seqSpaceRepDict = load(localpath(syn, seqSpaceRepID))
     U = seqSpaceRepDict["U"]
     Σ = seqSpaceRepDict["Σ"]
     V = seqSpaceRepDict["V"]
@@ -282,8 +282,6 @@ function main()
 
     pl4 = plot(plotArgs..., Theme(key_position=:none; themeArgs...)) # no legend
     saveplot(pl4, [:png,:svg,:pdf], joinpath(args["outdir-plots"], "fitnesspredictions_nolegend"))
-
-end
 
 end
 
