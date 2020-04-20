@@ -29,6 +29,7 @@ Pkg.add("SubMatrixSelectionSVD")
 Pkg.add("ArgParse")
 Pkg.add("Convex")
 Pkg.add("SCS")
+Pkg.add("Colors")
 
 github_registry("BioJulia/BioJuliaRegistry")
 github_install("rasmushenningsson/SynapseClient.jl")

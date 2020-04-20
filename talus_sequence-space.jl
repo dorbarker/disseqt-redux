@@ -9,8 +9,40 @@ using JLD
 using Gadfly
 using Cairo
 using Fontconfig
+using LinearAlgebra
+using SubMatrixSelectionSVD
+using Colors
 
 include("estimatesamplemix.jl")
+
+function talusplot(σ2::Vector, k=1:length(σ2)-1, args...; kwargs...)
+    talus = -diff(log2.(σ2))/2 # log₂(σₖ)-log₂(σₖ₊₁)
+
+    df = DataFrame(k=k, talus=talus[k])
+
+    plot(layer(df, x=:k, y=:talus, Geom.line()),
+         layer(df, x=:k, y=:talus, Geom.point()),
+         Guide.xlabel("k (Principal Component)"), # Guide.ylabel("log₂(σₖ)-log₂(σₖ₊₁)"),
+         Guide.ylabel("log₂(σₖ)-log₂(σₖ₊₁)"),
+         args...; kwargs...);
+end
+
+
+function talusplot(X::Matrix, k=[], args...; kwargs...)
+    K = size(X,2)<=size(X,1) ? Symmetric(X'X) : Symmetric(X*X') # Work with the smaller of the kernel matrices
+
+    # compute σᵢ² and talus plot
+    σ2 = eigvals(K)
+    sort!(σ2,rev=true) # largest to smallest
+    σ2 = σ2[1:findlast(σ2.>1e-9)] # get rid of eigenvalues at the end that might be 0 (or below, due to numerical problems)
+    
+    max_k = min(length(σ2)-1, length(k))
+    
+    talusplot(σ2, 1:max_k, args...; kwargs...);
+    
+end
+# talusplot(X::Matrix, k::Integer, args...; kwargs...) = talusplot(X, 1:k, args...; kwargs...)
+
 
 function loadswarms(swarms::String, bams::String)
     # replaces broken function from DISSEQT
@@ -37,11 +69,10 @@ function load_reference_fastas(paths::Array)
         referenceGenomes = map(x->x[1][2], referenceGenomes) # NB: Only for genomes with 1 segment, get the sequence part
     end
 
-    #names, referenceGenomes
     referenceGenomes
 end
 
-function calculate_limits(swarms::Array, limitOfDetection::AnnotatedArray)
+function calculate_limits(swarms::AnnotatedArray, limitOfDetection::AnnotatedArray)
 
     # get rid of annotations to simplify math stuff
     # arrays are 4x4x4xPxN - nuc3 x nuc2 x nuc1 x positions x samples
@@ -64,7 +95,7 @@ function calculate_limits(swarms::Array, limitOfDetection::AnnotatedArray)
     s, α, X
 end
 
-function talus(swarms::Array, limitOfDetection::AnnotatedArray, nbrDims::Int)
+function talus(swarms::AnnotatedArray, limitOfDetection::AnnotatedArray, nbrDims::Int, outdir::String)
 
     s, α, X = calculate_limits(swarms, limitOfDetection)
 
@@ -74,14 +105,13 @@ function talus(swarms::Array, limitOfDetection::AnnotatedArray, nbrDims::Int)
     σ = σ/maximum(σ) # normalize
     X = X[σ.>=σThreshold,:]
 
-
-    nbrDims = 40
-
-    pl = talusplot(X, 1:nbrDims, Guide.title("Talus plot"))
-    pl
+    p = talusplot(X, 1:nbrDims, Guide.title("Talus plot"))
+    
+    img = PNG(joinpath(outdir, "talus.png"), dpi=300) 
+    draw(img, p)
 end
 
-function sequence_space(dwarms::Array, limitOfDetection::AnnotatedArray, nbrDims::Int)
+function sequence_space(swarms::AnnotatedArray, limitOfDetection::AnnotatedArray, nbrDims::Int, outdir::String, colour_file::String, metadata, yvar::Symbol)
 
     s, α, X = calculate_limits(swarms, limitOfDetection)
 
@@ -93,8 +123,8 @@ function sequence_space(dwarms::Array, limitOfDetection::AnnotatedArray, nbrDims
     
     # Low-Rank Representation, Sample names, positions and codon list
     seqSpaceRep = "plots/seqspacerepresentation.jld"
-    save(seqSpaceRep, "U",U, "Σ",Σ, "V",V,
-                      "SampleID", convert(Vector{String},metadata[:SampleID]),
+    JLD.save(seqSpaceRep, "U",U, "Σ",Σ, "V",V,
+                      "SampleID", convert(Vector{String},metadata[!, :SampleID]),
                       "positions", swarms[:position][:],
                       "codons",    swarms[:codon][:],
                       "consensus", dropdims(swarms[:consensus]; dims=(1,2,3)) )
@@ -106,8 +136,17 @@ function sequence_space(dwarms::Array, limitOfDetection::AnnotatedArray, nbrDims
     signalDesc = string.(1:nbrSignals, " (", signalDimensions, "d)")
     df = DataFrame(Sigma=repeat(σThresholds',nbrSignals,1)[:], ProjectionScore=projectionScores[sigEnd,:][:], SignalNbr=repeat(signalDesc,1,length(σThresholds))[:])
     coords = Coord.cartesian(xmin=log10(σThresholds[1]), xmax=log10(σThresholds[end]), ymin=0)
-    pl = plot(df,x=:Sigma,y=:ProjectionScore,color=:SignalNbr,Geom.line,coords,
-              Scale.x_log10,Scale.color_discrete(),Guide.xlabel("σ Threshold"),Guide.ylabel("Projection Score"),Guide.colorkey(title="Signal"))
+
+    pl = plot(df,
+              x=:Sigma,
+              y=:ProjectionScore,
+              color=:SignalNbr,
+              Geom.line,coords,
+              Scale.x_log10,
+              Scale.color_discrete(),
+              Guide.xlabel("σ Threshold"),
+              Guide.ylabel("Projection Score"),
+              Guide.colorkey(title="Signal"))
 
 
     # make SMSSVD plots
@@ -126,8 +165,8 @@ function sequence_space(dwarms::Array, limitOfDetection::AnnotatedArray, nbrDims
                          "RIBA"=>RGB(0,1,1))
     mutagenColorMap = groupcolors(metadata[:Mutagen],mutagenColors)
 
-    P = pairwisescatterplot(V, metadata[:Reference], virusColorMap,
-                               metadata[:Mutagen],   mutagenColorMap,
+    P = pairwisescatterplot(V, metadata[!, :Reference], virusColorMap,
+                               metadata[!, yvar],   mutagenColorMap,
                                point_size=0.6mm)
 
 end
@@ -136,6 +175,8 @@ function arguments()
 
     s = ArgParseSettings()
 
+    plot_types = ["talus", "sequence_space"]
+    
     @add_arg_table! s begin
 
         "--bams"
@@ -166,9 +207,25 @@ function arguments()
             help = "Output directory"
             required = true
 
+        "--dimensions"
+            help = "Number of dimensions to analyze for talus or sequence space plots"
+            arg_type = Int
+            required = true
+
+        "--plot-type"
+            required = true
+            range_tester = (x->x in plot_types)
+            help = "Plot type; one of: \"" * join(plot_types, "\" or \"") * "\""
+
+        "--colours"
+            help = "CSV file with key,RGB pairs like \"StrainOrMetadataField,#CC8899\""
+
     end
-    return parse_args(s)
+    args = parse_args(s)
+#    args["plot-type"] = Symbol(args["plot-type"])
+    args
 end
+
 function main()
 
     args = arguments()
@@ -222,6 +279,12 @@ function main()
     limitOfDetection = limitOfDetection[:,:,:,inset(:position,positions)] # filter by positions
     @assert isequal(swarms[:position][:], limitOfDetection[:position][:]) # the positions must be the same
 
+    # Generate plots
+    if args["plot-type"] == "talus"
+        talus(swarms, limitOfDetection, args["dimensions"], args["output"])
+    else
+        sequence_space(swarms, limitOfDetection, args["dimensions"], args["output"], args["colours"], metadata, yvar) 
+    end
 end
 
 main()
