@@ -15,6 +15,32 @@ using Colors
 
 include("estimatesamplemix.jl")
 
+function get_colours(colours_path::String, metadata::DataFrame, xvar::Symbol, yvar::Symbol)
+    
+    colours = CSV.read(colours_path)
+    
+    x_colours = Dict()
+    y_colours = Dict()
+    
+    for (k, v) in eachrow(colours)
+        
+        colour = parse(Colorant, v)
+        if k in metadata[!, xvar]  # the sample names
+            x_colours[k] = colour
+        
+        elseif k in metadata[!, yvar]
+            y_colours[k] = colour
+
+        else
+            continue
+        end
+
+    end
+
+    x_colours, y_colours
+
+end
+
 function talusplot(σ2::Vector, k=1:length(σ2)-1, args...; kwargs...)
     talus = -diff(log2.(σ2))/2 # log₂(σₖ)-log₂(σₖ₊₁)
 
@@ -111,7 +137,14 @@ function talus(swarms::AnnotatedArray, limitOfDetection::AnnotatedArray, nbrDims
     draw(img, p)
 end
 
-function sequence_space(swarms::AnnotatedArray, limitOfDetection::AnnotatedArray, nbrDims::Int, outdir::String, colour_file::String, metadata, yvar::Symbol)
+function sequence_space(swarms::AnnotatedArray, 
+                        limitOfDetection::AnnotatedArray,
+                        nbrDims::Int,
+                        outdir::String,
+                        colours::String,
+                        metadata,
+                        xvar::Symbol,
+                        yvar::Symbol)
 
     s, α, X = calculate_limits(swarms, limitOfDetection)
 
@@ -151,22 +184,26 @@ function sequence_space(swarms::AnnotatedArray, limitOfDetection::AnnotatedArray
 
     # make SMSSVD plots
 
-    virusColors = Dict("WT"  =>colorant"black",
-                       "Less"=>colorant"blue",
-                       "More"=>colorant"green",
-                       "Stop"=>colorant"red")
-    virusColorMap = groupcolors(metadata[:Reference],virusColors)
+    x_colours, y_colours = get_colours(colours, metadata, xvar, yvar)
+    x_colour_map = groupcolors(metadata[xvar], x_colours)
+    y_colour_map = groupcolors(metadata[yvar], y_colours)
 
-    mutagenColors = Dict("5FU" =>RGB(1,0,0),
-                         "AML" =>RGB(0,1,0),
-                         "AZC" =>RGB(0,0,1),
-                         "Mn"  =>RGB(0.8,0.8,0),
-                         "Mock"=>RGB(1,0,1),
-                         "RIBA"=>RGB(0,1,1))
-    mutagenColorMap = groupcolors(metadata[:Mutagen],mutagenColors)
+    # virusColors = Dict("WT"  =>colorant"black",
+    #                    "Less"=>colorant"blue",
+    #                    "More"=>colorant"green",
+    #                    "Stop"=>colorant"red")
+    # virusColorMap = groupcolors(metadata[:Reference],virusColors)
 
-    P = pairwisescatterplot(V, metadata[!, :Reference], virusColorMap,
-                               metadata[!, yvar],   mutagenColorMap,
+    # mutagenColors = Dict("5FU" =>RGB(1,0,0),
+    #                      "AML" =>RGB(0,1,0),
+    #                      "AZC" =>RGB(0,0,1),
+    #                      "Mn"  =>RGB(0.8,0.8,0),
+    #                      "Mock"=>RGB(1,0,1),
+    #                      "RIBA"=>RGB(0,1,1))
+    # mutagenColorMap = groupcolors(metadata[:Mutagen],mutagenColors)
+
+    P = pairwisescatterplot(V, metadata[!, xvar], x_colour_map,
+                               metadata[!, yvar], y_colour_map,
                                point_size=0.6mm)
 
 end
@@ -220,9 +257,17 @@ function arguments()
         "--colours"
             help = "CSV file with key,RGB pairs like \"StrainOrMetadataField,#CC8899\""
 
+        "-x"
+            help = "X-variable for metadata in sequence_space plots"
+        
+        "-y"
+            help = "Y-variable for metadata in sequence_space plots"
+
     end
     args = parse_args(s)
-#    args["plot-type"] = Symbol(args["plot-type"])
+
+    args["x"] = Symbol(args["x"])
+    args["y"] = Symbol(args["y"])
     args
 end
 
@@ -283,7 +328,7 @@ function main()
     if args["plot-type"] == "talus"
         talus(swarms, limitOfDetection, args["dimensions"], args["output"])
     else
-        sequence_space(swarms, limitOfDetection, args["dimensions"], args["output"], args["colours"], metadata, yvar) 
+        sequence_space(swarms, limitOfDetection, args["dimensions"], args["output"], args["colours"], metadata, args["x"], args["y"]) 
     end
 end
 

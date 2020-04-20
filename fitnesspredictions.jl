@@ -136,7 +136,7 @@ function main()
 
 
 
-    addlevel!(metadata) # categorize dosages as low, medium, high
+    #addlevel!(metadata) # categorize dosages as low, medium, high
 
 
     # get fitness
