@@ -51,11 +51,6 @@ function printifinfo(log,str)
 	isempty(str) || println(str)
 end
 
-
-#function getreferenceinfo(ref::Tuple{T,String}, reference_genome::String) where {T}
-#    ref[1], ref[2], reference_genome, reference_genome 
-#end
-
 function getreferenceinfo(refs::Vector, reference_genome::String)
     #[getreferenceinfo(r, referenceFolder) for r in refs]
     
@@ -192,73 +187,21 @@ function align_single(sample::Sample, adapters::String,
 	sample, String(take!(globalLog))
 end
 
- 
-# utility function that tries to identify sample names in folder were each sample might have multiple fastq files
-function find_samples(fastqPath::String, pattern::Regex=r".+(?=_L\d+_R1_\d+.fastq.gz$)"; log=devnull)
-	
-	# if namePrefix != "" && namePrefix[1] != '_'
-	# 	namePrefix = namePrefix * "_"
-	# end
+function find_samples(fastqPath::String)
+    
+    sample_directories = readdir(fastqPath)
 
-	if isempty(fastqPath)
-		error("Could not find \"$runName\" in \"$fastqPath\".")
-	end
+    samples = Vector{Sample}(undef, length(sample_directories))
 
-	fileNames = readdir(fastqPath, join=false)
-	filePaths = readdir(fastqPath, join=true)
-	
-	# find files matching pattern
-	# matches = map( x->match(pattern,x), fileNames )
-	# mask = falses(matches)
-	# map!( x->x!=nothing, mask, matches );
-	matches = match.(pattern,fileNames)
-	mask = matches.!=nothing
+    for (i, sample) in enumerate(sample_directories)
+        
+        sample_fastqs = readdir(joinpath(fastqPath, sample), join=true)
 
-	# log warning for non-matching files
-	for f in fileNames[.~mask]
-		printifwarning(log, "File \"$f\" was ignored.")
-	end
+        samples[i] = Sample(sample, sample_fastqs)
 
-
-	# remove files that do not match pattern
-	fileNames = fileNames[mask]
-	filePaths = filePaths[mask]
-	matches = convert(Vector{RegexMatch}, matches[mask])
-
-	# extract the matching part of the regex as strings
-	matchingNames = Vector{String}(undef,size(matches))
-	map!( x->x.match, matchingNames, matches )
-
-	# put all files with the same match together (and add the run name to the sample name)
-	#samples = [ Sample("$namePrefix$u", filePaths[matchingNames.==u]) for u in unique(matchingNames) ]
-	samples = [ Sample("$u", filePaths[matchingNames.==u]) for u in unique(matchingNames) ]
-
-
-	for s in samples
-		n = length(s.fastq)
-		println(log, "Found sample \"$(s.name)\" with $n fastq files.")
-		#println("Found sample \"$(s.name)\" with $n fastq files.")
-	end
-	samples
-end
-
-function bwaindex(reference::String; log=devnull)
-	println(log, "--- Indexing with bwa index ---"); flush(log)
-	out = DiskBuffer()
-	out2 = DiskBuffer() # bwa index writes info to stderr...
-
-	ret = 0
-	try
-		run(pipeline(`bwa index $reference`,stdout=openbuf(out),stderr=openbuf(out2)))
-	catch
-		ret = 1
-	end
-
-	printifinfo(log,closebuf(out))
-	printifinfo(log,closebuf(out2))
-	ret != 0 && printiferror(log, "BWA indexing failed.")
-	flush(log)
-	ret
+    end
+    
+    samples
 end
 
 function align_samples(samples::Vector{Sample}, adapters::String,
@@ -331,15 +274,9 @@ end
 function main()
 
     args = arguments()
-    println(args["fastqs"])
+    
 # --- Setup --------------------------------------------------------------------
 
-    # Rules for matching sample IDs to references.
-    # The rule can either be a Regex or a function taking the sample ID and returning true/false.
-    # refs = [(r"_p\d+_WT_", "WT.fasta"),
-    #        (r"_p\d+_299_", "CVB3_299.fasta"), 
-    #        (r"_p\d+_372_", "CVB3_372.fasta")]
-            #(r"Undetermined", "phiX174.fasta")] # Always keep this unless PhiX wasn't used in the sequencing.
     refs = [(r".*", args["reference-genome"])]
     refs = getreferenceinfo(refs, args["reference-genome"]) 
 
@@ -360,7 +297,7 @@ function main()
 
     start = time()
     println(log,"Starting alignment batch run at $(now())"); flush(log)
-    samples = find_samples(args["fastqs"], log=log); flush(log)
+    samples = find_samples(args["fastqs"])
 
     assign_reference!(samples, refs, log=log); flush(log)
 
