@@ -1,37 +1,34 @@
 using ArgParse
-using DISSEQT
-using DISSEQT.AlignUtils
-using DISSEQT.SynapseTools
-using DISSEQT.BamReader
-using JLD: save
+@everywhere using DISSEQT
+@everywhere using DISSEQT.AlignUtils
+@everywhere using DISSEQT.BamReader
+@everywhere import DISSEQT.BamReader.BamFile
+@everywhere using JLD: save
+using Distributed
 
-function listaligned(path::AbstractString, runName::AbstractString)
-
+function find_aligned(path::String)
+  
     paths = readdir(path, join=true)
-    names = readdir(path, join=false)
+    mask = match.(r".bam$", paths) .!= nothing
+    paths[mask]
 
-    # filter by extension
-    mask = match.(r".bam$",names) .!= nothing
-    paths[mask], names[mask]
 end
 
-function find_aligned(path::AbstractString, runName::AbstractString)
-	paths, names = listaligned(path, runName)
-	names = map(x->x[1:end-4], names) # keep only matches and remove ".bam" ending
-	paths, names
-end
 
-function computecodonfrequencies_derp(samplePath::String, sampleName::String, 
-                                 outFolder::String; 
-                                 strands=:both, mappingQualityThreshold=30, 
-                                 baseQualityThreshold=30, removeAmbiguous=true,
-                                 method=:Newton, newtonRegularization=1e-6,
+@everywhere function computecodonfrequencies(samplePath::String, 
+                                 outFolder::String, 
+                                 strands::Symbol;
+                                 mappingQualityThreshold=30, 
+                                 baseQualityThreshold=30,
+                                 removeAmbiguous=true,
+                                 method=:Newton,
+                                 newtonRegularization=1e-6,
                                  maxIter=10000,
                                  outFormat=:JLD)
-	log = IOBuffer()
 
-	println(log, "Computing codon frequencies: ", sampleName)
-	startTime = time()
+    sampleName = samplePath |> basename |> splitext |> first
+
+	println("Computing codon frequencies: $sampleName $strands")
 
 	bamFile = BamFile(samplePath)
 	freqs,positions,coverage = mlcodonfreqs(bamFile,strands=strands,
@@ -58,28 +55,8 @@ function computecodonfrequencies_derp(samplePath::String, sampleName::String,
 	#typeof(outFormat) <: AbstractArray || (outFormat = [outFormat])
 	save("$fileprefix.jld", d, compress=true)
 
-	duration = time()-startTime
-	println(log, "Done in ", duration, "s.")
-	String(take!(log))
+	#String(take!(log))
 end
-
-function computecodonfrequencies(samplePaths::Vector{String},
-                                 sampleNames::Vector{String}, 
-                                 outFolder::String; 
-                                 log=stdout, bamDir="bam",
-                                 kwargs...)
-
-	for (sample_path, sample_name) in zip(samplePaths, sampleNames)
-		println("Computing codon frequencies for sample $sample_name")
-		logStr = computecodonfrequencies_derp(sample_path, sample_name, outFolder;kwargs...)
-		print(log, logStr); flush(log)
-		println("Finished computing codon frequencies for sample $sample_name")
-
-		
-	end
-	nothing
-end
-
 
 function arguments()
 
@@ -103,11 +80,6 @@ function main()
     args = arguments()
 # --- Setup --------------------------------------------------------------------
 
-    runName = "664V9AAXX"
-    
-    # Local logFile.
-    logFile = "MutantSwarms.log"
-
     # Specify which strands to include in each run of the swarm computations. 
     strands = [:both, :forward, :reverse]
 
@@ -116,29 +88,26 @@ function main()
     rev = joinpath(args["swarms"], "reverse")
 
     mkpath(args["swarms"]) 
+    :both in strands && mkpath(both)
     :forward in strands && mkpath(fwd) # subfolder for forward strand
     :reverse in strands && mkpath(rev) # subfolder for reverse strand
 
 # --- Compute Mutant Swarms ----------------------------------------------------
     # find samples
-    samplePaths, sampleNames = find_aligned(args["bams"], runName)
+    samplePaths = find_aligned(args["bams"])
     
     strand2folder = Dict(:both=>both, :forward=>fwd, :reverse=>rev)
     # compute codon frequencies
-    log = open(logFile, "w")
     
+    arg_length = 1:length(samplePaths) 
     for strand in strands
         outFolder = strand2folder[strand]
 
-        println(log,"--- Computing mutant swarms for $strand strand(s) ---"); flush(log)
-        computecodonfrequencies(samplePaths,
-                                sampleNames,
-                                outFolder,
-                                bamDir=args["bams"],
-                                strands=strand,
-                                log=log)
+        println("--- Computing mutant swarms for $strand strand(s) ---")
+
+        pmap(x -> computecodonfrequencies(x, outFolder, strand), samplePaths; distributed=true)
+
     end
-    close(log)
 end
 
 main()
